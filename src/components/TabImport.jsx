@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
-import { Upload, FileJson, AlertCircle } from 'lucide-react';
+import { Upload, FileJson, AlertCircle, Layers } from 'lucide-react';
 
-const TabImport = ({ yamlText, setYamlText, parseError, setParseError, isParsing, handleImportText, handleFileUpload }) => {
+const TabImport = ({ yamlText, setYamlText, parseError, setParseError, isParsing, handleImportText, handleFileUpload, onOpenConverter }) => {
   const fileInputRef = useRef(null);
 
   return (
@@ -10,6 +10,9 @@ const TabImport = ({ yamlText, setYamlText, parseError, setParseError, isParsing
         <h2 className="text-2xl font-bold mb-4 flex items-center justify-between">
           解析配置
           <div className="flex flex-wrap gap-2">
+            <button onClick={onOpenConverter} className="text-sm px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50 rounded-lg flex items-center gap-2 transition-colors">
+              <Layers className="w-4 h-4" /> 通过订阅转换
+            </button>
             <input type="file" accept=".yaml,.yml" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
             <button onClick={() => fileInputRef.current?.click()} className="text-sm px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 rounded-lg flex items-center gap-2 transition-colors">
               <Upload className="w-4 h-4" /> 上传 YAML 文件

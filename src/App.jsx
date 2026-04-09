@@ -19,6 +19,8 @@ import ProxyGroupEditorModal from './components/ProxyGroupEditorModal';
 import RuleProviderEditorModal from './components/RuleProviderEditorModal';
 import RuleEditorModal from './components/RuleEditorModal';
 
+import SubscriptionConverterModal from './components/SubscriptionConverterModal';
+
 export default function App() {
   const yamlLoaded = useYamlLoader();
   const [activeTab, setActiveTab] = useState('import');
@@ -32,6 +34,7 @@ export default function App() {
   const [editingProvider, setEditingProvider] = useState(null);
   const [editingRule, setEditingRule] = useState(null);
   const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [converterModalVisible, setConverterModalVisible] = useState(false);
   const [linkText, setLinkText] = useState('');
 
   // 全局加载与提示状态
@@ -90,6 +93,21 @@ export default function App() {
     }
   }, [config, showToast]);
 
+  const handleImportToClash = useCallback(() => {
+    if (!yamlText) {
+      showAlert("配置内容为空，请先生成或上传配置。");
+      return;
+    }
+    try {
+      // Use data URI for raw YAML content
+      const dataUrl = `data:text/yaml;charset=utf-8,${encodeURIComponent(yamlText)}`;
+      window.location.href = `clash://install-config?url=${encodeURIComponent(dataUrl)}`;
+      showToast('正在尝试调用 Clash 导入...');
+    } catch (err) {
+      showAlert("导入失败: " + err.message);
+    }
+  }, [yamlText, showAlert, showToast]);
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -136,6 +154,23 @@ export default function App() {
       setParseError("复制失败: " + err.message);
     }
   };
+
+  const handleConvertSubscription = useCallback(async (url) => {
+    setIsParsing(true);
+    try {
+      // 这里的逻辑需要根据实际的转换服务进行调整
+      // 假设转换服务直接返回 YAML 内容
+      const response = await fetch(url);
+      const text = await response.text();
+      setYamlText(text);
+      applyYamlTextAsync(text);
+      setConverterModalVisible(false);
+    } catch (e) {
+      showAlert("转换失败，请检查链接或网络状态。");
+    } finally {
+      setIsParsing(false);
+    }
+  }, [applyYamlTextAsync, showAlert]);
 
   const handleImportLinks = useCallback(() => {
     const lines = linkText.split('\n').map(l => l.trim()).filter(l => l);
@@ -375,8 +410,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans">
-      {/* 状态与弹窗叠加层 (Simplified for brevity) */}
-      {isParsing && <div className="fixed inset-0 bg-slate-100/70 dark:bg-slate-900/70 backdrop-blur-sm z-[200] flex flex-col items-center justify-center gap-4">正在解析配置...</div>}
+        {isParsing && (
+          <div className="fixed inset-0 bg-slate-100/70 dark:bg-slate-900/70 backdrop-blur-sm z-[200] flex flex-col items-center justify-center gap-4">
+            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-lg font-bold text-slate-800 dark:text-white">正在解析配置，请稍候...</p>
+          </div>
+        )}
 
       {toast && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-2 animate-bounce">
@@ -404,7 +443,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="max-w-[1600px] w-full mx-auto flex flex-col md:flex-row h-screen relative">
+      <div className="w-full flex flex-col md:flex-row h-screen relative">
         <div className="w-full md:w-64 bg-white dark:bg-slate-900 shadow-sm border-r dark:border-slate-800 flex flex-col p-4 shrink-0 overflow-y-auto">
           <h1 className="text-2xl font-black bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-8 flex items-center gap-2">Clash YAML Editor</h1>
           <nav className="flex flex-col gap-2">
@@ -421,8 +460,8 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-slate-100 dark:bg-slate-950">
-          {activeTab === 'import' && <TabImport yamlText={yamlText} setYamlText={setYamlText} parseError={parseError} setParseError={setParseError} isParsing={isParsing} handleImportText={handleImportText} handleFileUpload={handleFileUpload} />}
-          {activeTab === 'export' && <TabExport yamlText={yamlText} setYamlText={setYamlText} handleExportText={handleExportText} copyToClipboard={copyToClipboard} handleDownloadFile={handleDownloadFile} />}
+          {activeTab === 'import' && <TabImport yamlText={yamlText} setYamlText={setYamlText} parseError={parseError} setParseError={setParseError} isParsing={isParsing} handleImportText={handleImportText} handleFileUpload={handleFileUpload} onOpenConverter={() => setConverterModalVisible(true)} />}
+          {activeTab === 'export' && <TabExport yamlText={yamlText} setYamlText={setYamlText} handleExportText={handleExportText} copyToClipboard={copyToClipboard} handleDownloadFile={handleDownloadFile} handleImportToClash={handleImportToClash} />}
           {activeTab === 'proxies' && <TabProxies proxies={config.proxies} setLinkModalVisible={setLinkModalVisible} setEditingProxy={setEditingProxy} deleteProxy={deleteProxy} />}
           {activeTab === 'groups' && <TabGroups groups={config['proxy-groups']} setEditingGroup={setEditingGroup} deleteGroup={deleteGroup} reorderGroups={reorderGroups} />}
           {activeTab === 'rules' && <TabRules providers={config['rule-providers']} rules={config.rules} setEditingProvider={setEditingProvider} deleteProvider={deleteProvider} setEditingRule={setEditingRule} deleteRule={deleteRule} moveRuleToTop={moveRuleToTop} moveRuleToBottom={moveRuleToBottom} reorderRules={reorderRules} />}
@@ -430,6 +469,9 @@ export default function App() {
         </div>
       </div>
 
+      {converterModalVisible && (
+        <SubscriptionConverterModal onClose={() => setConverterModalVisible(false)} onConvert={handleConvertSubscription} showAlert={showAlert} />
+      )}
       {linkModalVisible && (
         <Modal title="通过链接批量导入节点" onClose={() => setLinkModalVisible(false)} onSave={handleImportLinks} saveText="解析并导入" widthClass="max-w-2xl">
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">支持粘贴多行链接，自动识别常用的分享格式。</p>
