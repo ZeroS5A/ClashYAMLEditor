@@ -15,7 +15,7 @@ function ProxyGroupEditorModal({ group, allAvailableNames, onClose, onSave, show
   const handleSave = () => {
     if (!data.name.trim()) return showAlert('保存失败：策略组名称不能为空');
     let result = { name: data.name.trim(), type: data.type, proxies: data.proxies };
-    if (['url-test', 'fallback', 'load-balance'].includes(data.type)) { result.url = data.url; result.interval = Number(data.interval); }
+    if (['url-test', 'fallback', 'load-balance', 'smart'].includes(data.type)) { result.url = data.url; result.interval = Number(data.interval); }
     onSave(result);
   };
 
@@ -47,12 +47,12 @@ function ProxyGroupEditorModal({ group, allAvailableNames, onClose, onSave, show
           <div className="flex flex-col gap-2">
             <label className="font-medium text-sm text-slate-700 dark:text-slate-300">类型 (type)</label>
             <select value={data.type} onChange={e => setData({...data, type: e.target.value})} className="p-3 border rounded-xl bg-white dark:bg-slate-900 dark:border-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
-              <option value="select">select (手动选择)</option><option value="url-test">url-test (自动测速)</option><option value="fallback">fallback (故障转移)</option><option value="load-balance">load-balance (负载均衡)</option><option value="relay">relay (链式代理)</option>
+              <option value="select">select (手动选择)</option><option value="url-test">url-test (自动测速)</option><option value="fallback">fallback (故障转移)</option><option value="load-balance">load-balance (负载均衡)</option><option value="smart">smart (智能策略)</option><option value="relay">relay (链式代理)</option>
             </select>
           </div>
         </div>
 
-        {['url-test', 'fallback', 'load-balance'].includes(data.type) && (
+        {['url-test', 'fallback', 'load-balance', 'smart'].includes(data.type) && (
           <div className="grid grid-cols-2 gap-4 p-4 bg-indigo-50 dark:bg-indigo-900/10 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
             <InputRow label="测速链接 (url)" value={data.url} onChange={v => setData({...data, url: v})} />
             <InputRow label="测速间隔秒数 (interval)" type="number" value={data.interval} onChange={v => setData({...data, interval: v})} />
