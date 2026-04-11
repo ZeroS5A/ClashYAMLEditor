@@ -47,7 +47,7 @@ const remoteConfigs = [
 
 const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
   const [subUrl, setSubUrl] = useState('');
-  const [backendUrl, setBackendUrl] = useState('http://192.168.31.239:25500/sub?');
+  const [backendUrl, setBackendUrl] = useState('https://192.168.xx.xx:25500');
   const [target, setTarget] = useState('clash');
   const [configSelect, setConfigSelect] = useState('https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full_MultiMode.ini');
   const [customConfigUrl, setCustomConfigUrl] = useState('');
@@ -70,7 +70,7 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
         return;
     }
 
-    let finalLink = `${backendUrl}target=${target}&url=${sub}&config=${encodeURIComponent(configUrl)}`;
+    let finalLink = `${backendUrl}/sub?target=${target}&url=${sub}&config=${encodeURIComponent(configUrl)}`;
 
     Object.keys(options).forEach(key => {
         if (options[key]) finalLink += `&${key}=true`;
