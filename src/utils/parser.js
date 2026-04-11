@@ -148,6 +148,32 @@ export const parseProxyLink = (link) => {
   }
 };
 
+// --- 订阅链接获取与解析 ---
+export const fetchSubscriptionContent = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const text = await response.text();
+
+  // 尝试 base64 解码（大多数订阅返回 base64 编码的节点列表）
+  try {
+    const decoded = safeDecodeBase64(text.trim());
+    // 验证解码结果是否包含有效的协议链接
+    if (decoded.match(/(vmess|trojan|vless|ss|hysteria2|hy2):\/\//)) {
+      return decoded.split('\n').map(l => l.trim()).filter(l => l);
+    }
+  } catch (e) {
+    // 非 base64，尝试直接解析
+  }
+
+  // 直接按行分割（有些订阅直接返回明文链接）
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+  if (lines.some(l => /^(vmess|trojan|vless|ss|hysteria2|hy2):\/\//.test(l))) {
+    return lines;
+  }
+
+  throw new Error("订阅内容无法解析为有效的节点链接");
+};
+
 export const parseRuleString = (str) => {
   if (typeof str !== 'string') {
     return { type: 'UNKNOWN', payload: JSON.stringify(str), target: '', extra: '' };

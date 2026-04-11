@@ -3,7 +3,7 @@ import { Settings, Server, Layers, BookOpen, Upload, Download, Save, X, Check, A
 
 import useYamlLoader from './hooks/useYamlLoader';
 import { DEFAULT_EMPTY_CONFIG } from './constants/templates';
-import { parseProxyLink, parseRuleString } from './utils/parser';
+import { parseProxyLink, parseRuleString, fetchSubscriptionContent } from './utils/parser';
 
 import Modal from './components/Modal';
 import TabButton from './components/TabButton';
@@ -36,6 +36,7 @@ export default function App() {
   const [linkModalVisible, setLinkModalVisible] = useState(false);
   const [converterModalVisible, setConverterModalVisible] = useState(false);
   const [linkText, setLinkText] = useState('');
+  const [isImportingLinks, setIsImportingLinks] = useState(false);
 
   // 全局加载与提示状态
   const [isParsing, setIsParsing] = useState(false);
@@ -172,38 +173,96 @@ export default function App() {
     }
   }, [applyYamlTextAsync, showAlert]);
 
-  const handleImportLinks = useCallback(() => {
+  const handleImportLinks = useCallback(async () => {
     const lines = linkText.split('\n').map(l => l.trim()).filter(l => l);
-    let successCount = 0;
+    if (lines.length === 0) return;
 
-    setConfig(prev => {
-      let newProxies = [...prev.proxies];
-      lines.forEach(link => {
-        try {
-          const proxy = parseProxyLink(link);
-          Object.keys(proxy).forEach(key => proxy[key] === undefined && delete proxy[key]);
-          let finalName = proxy.name;
-          let counter = 1;
-          while(newProxies.some(p => p.name === finalName)) {
-            finalName = `${proxy.name} ${counter++}`;
-          }
-          proxy.name = finalName;
-          newProxies.push(proxy);
-          successCount++;
-        } catch (e) {
-          console.warn("链接跳过:", link, e);
-        }
-      });
-      return { ...prev, proxies: newProxies };
+    setIsImportingLinks(true);
+    let allProxyLinks = [];
+
+    // 分类：订阅链接 vs 直接节点链接
+    const subUrls = [];
+    const directLinks = [];
+    lines.forEach(line => {
+      if (/^https?:\/\//i.test(line)) {
+        subUrls.push(line);
+      } else {
+        directLinks.push(line);
+      }
     });
 
-    if (successCount > 0) {
-      showToast(`成功解析导入 ${successCount} 个节点`);
+    // 获取订阅内容
+    const subErrors = [];
+    for (const url of subUrls) {
+      try {
+        const links = await fetchSubscriptionContent(url);
+        allProxyLinks.push(...links);
+      } catch (e) {
+        console.warn("订阅获取失败:", url, e);
+        subErrors.push(url);
+      }
+    }
+
+    // 直接节点链接也加入
+    allProxyLinks.push(...directLinks);
+
+    // 预先解析所有链接，收集有效的 proxy 对象
+    const parsedProxies = [];
+    const parseErrors = [];
+    allProxyLinks.forEach(link => {
+      try {
+        const proxy = parseProxyLink(link);
+        Object.keys(proxy).forEach(key => proxy[key] === undefined && delete proxy[key]);
+        parsedProxies.push(proxy);
+      } catch (e) {
+        parseErrors.push({ link, error: e.message });
+      }
+    });
+
+    if (parsedProxies.length > 0) {
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      setConfig(prev => {
+        let newProxies = [...prev.proxies];
+        parsedProxies.forEach(proxy => {
+          const existingIdx = newProxies.findIndex(p => p.name === proxy.name);
+          if (existingIdx !== -1) {
+            // 同名节点：更新信息
+            newProxies[existingIdx] = proxy;
+            updatedCount++;
+          } else {
+            newProxies.push(proxy);
+            addedCount++;
+          }
+        });
+        return { ...prev, proxies: newProxies };
+      });
+
+      let msg = `成功解析 ${parsedProxies.length} 条节点`;
+      if (addedCount > 0 && updatedCount > 0) {
+        msg += `（新增 ${addedCount}，更新 ${updatedCount}）`;
+      } else if (updatedCount > 0) {
+        msg += `（全部更新）`;
+      }
+      if (subErrors.length > 0) {
+        msg += `，${subErrors.length} 个订阅链接获取失败`;
+      }
+      if (parseErrors.length > 0) {
+        msg += `，${parseErrors.length} 条链接解析失败`;
+      }
+      showToast(msg);
       setLinkModalVisible(false);
       setLinkText('');
     } else {
-      showAlert("未能成功解析任何节点。请检查链接格式。");
+      let msg = "未能成功解析任何节点。请检查链接格式。";
+      if (subErrors.length > 0 && subUrls.length > 0) {
+        msg = `所有订阅链接获取失败（共 ${subErrors.length} 个），请检查网络或链接是否正确。`;
+      }
+      showAlert(msg);
     }
+
+    setIsImportingLinks(false);
   }, [linkText, showAlert, showToast]);
 
   const saveProxy = useCallback((originalName, proxyData) => {
@@ -473,9 +532,16 @@ export default function App() {
         <SubscriptionConverterModal onClose={() => setConverterModalVisible(false)} onConvert={handleConvertSubscription} showAlert={showAlert} />
       )}
       {linkModalVisible && (
-        <Modal title="通过链接批量导入节点" onClose={() => setLinkModalVisible(false)} onSave={handleImportLinks} saveText="解析并导入" widthClass="max-w-2xl">
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">支持粘贴多行链接，自动识别常用的分享格式。</p>
-          <textarea value={linkText} onChange={(e) => setLinkText(e.target.value)} placeholder="vmess://...\ntrojan://...\nss://..." className="w-full h-48 font-mono text-sm p-4 border rounded-xl bg-slate-50 dark:bg-slate-950 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none custom-scrollbar whitespace-pre-wrap" />
+        <Modal title="通过链接批量导入/更新节点" onClose={() => { if (!isImportingLinks) setLinkModalVisible(false); }} onSave={isImportingLinks ? undefined : handleImportLinks} saveText={isImportingLinks ? "获取中..." : "解析并导入"} widthClass="max-w-2xl">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">支持粘贴多行节点链接，自动识别常用的分享格式。</p>
+          <p className="text-xs text-blue-500 dark:text-blue-400 mb-4">也支持粘贴 http/https 订阅链接，自动获取并解析批量节点。</p>
+          {isImportingLinks && (
+            <div className="flex items-center gap-2 mb-3 text-sm text-blue-600 dark:text-blue-400">
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+              正在获取订阅内容...
+            </div>
+          )}
+          <textarea value={linkText} onChange={(e) => setLinkText(e.target.value)} placeholder={"vmess://...\ntrojan://...\nss://...\n\nhttps://example.com/sub"} className="w-full h-48 font-mono text-sm p-4 border rounded-xl bg-slate-50 dark:bg-slate-950 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none custom-scrollbar whitespace-pre-wrap disabled:opacity-50" disabled={isImportingLinks} />
         </Modal>
       )}
       {editingProxy && <ProxyEditorModal proxy={editingProxy.data} onClose={() => setEditingProxy(null)} onSave={(data) => saveProxy(editingProxy.originalName, data)} showAlert={showAlert} parseProxyLink={parseProxyLink} />}

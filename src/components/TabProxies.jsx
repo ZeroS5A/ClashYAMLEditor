@@ -7,8 +7,8 @@ const TabProxies = ({ proxies, setLinkModalVisible, setEditingProxy, deleteProxy
     <div className="sticky top-0 z-20 bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-md px-4 md:px-8 py-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
       <h2 className="text-2xl font-bold flex items-center gap-2"><Server className="w-6 h-6 text-blue-500" /> 节点管理 ({proxies.length})</h2>
       <div className="flex gap-2">
-        <button onClick={() => setLinkModalVisible(true)} className="px-4 py-2 bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 dark:bg-slate-900 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800 rounded-lg flex items-center gap-2 transition-colors"><LinkIcon className="w-4 h-4" /> 通过链接导入</button>
-        <button onClick={() => setEditingProxy({ originalName: null, data: { name: '新节点', type: 'ss', server: '1.2.3.4', port: 443 } })} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors"><Plus className="w-4 h-4" /> 添加节点</button>
+        <button onClick={() => setLinkModalVisible(true)} className="px-4 py-2 bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 dark:bg-slate-900 dark:border-slate-700 dark:text-blue-400 dark:hover:bg-slate-800 rounded-lg flex items-center gap-2 transition-colors"><LinkIcon className="w-4 h-4" /> 通过链接导入/更新节点</button>
+        <button onClick={() => setEditingProxy({ originalName: null, data: { name: '新节点', type: 'ss', server: '1.2.3.4', port: 443 } })} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors"><Plus className="w-4 h-4" /> 添加单个节点</button>
       </div>
     </div>
     <div className="px-4 md:px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">

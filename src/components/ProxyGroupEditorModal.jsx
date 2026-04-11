@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { GripVertical, X, AlertCircle } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { GripVertical, X, AlertCircle, Search, Check } from 'lucide-react';
 import Modal from './Modal';
 import InputRow from './InputRow';
 
@@ -9,8 +9,15 @@ function ProxyGroupEditorModal({ group, allAvailableNames, onClose, onSave, show
   });
 
   const [draggedProxyIdx, setDraggedProxyIdx] = useState(null);
+  const [proxySearch, setProxySearch] = useState('');
 
   const safeAvailableNames = allAvailableNames.filter(n => n !== group.name);
+
+  const filteredNames = useMemo(() => {
+    if (!proxySearch.trim()) return safeAvailableNames;
+    const kw = proxySearch.trim().toLowerCase();
+    return safeAvailableNames.filter(n => String(n).toLowerCase().includes(kw));
+  }, [safeAvailableNames, proxySearch]);
 
   const handleSave = () => {
     if (!data.name.trim()) return showAlert('保存失败：策略组名称不能为空');
@@ -20,10 +27,12 @@ function ProxyGroupEditorModal({ group, allAvailableNames, onClose, onSave, show
   };
 
   const removeProxy = (idx) => setData({...data, proxies: data.proxies.filter((_, i) => i !== idx)});
-  const handleAddProxy = (e) => {
-    const val = e.target.value;
-    if (val && !data.proxies.includes(val)) setData({...data, proxies: [...data.proxies, val]});
-    e.target.value = '';
+  const toggleProxy = (name) => {
+    if (data.proxies.includes(name)) {
+      setData({...data, proxies: data.proxies.filter(n => n !== name)});
+    } else {
+      setData({...data, proxies: [...data.proxies, name]});
+    }
   };
 
   const onProxyDragStart = (e, idx) => setDraggedProxyIdx(idx);
@@ -61,17 +70,48 @@ function ProxyGroupEditorModal({ group, allAvailableNames, onClose, onSave, show
 
         <div className="border-t dark:border-slate-800 pt-6">
           <h3 className="font-bold text-lg mb-4 flex items-center justify-between">
-            组内节点列表 (proxies) <span className="text-sm font-normal text-slate-500">共 {data.proxies.length} 个</span>
+            组内节点列表 (proxies) <span className="text-sm font-normal text-slate-500">已选 {data.proxies.length} 个</span>
           </h3>
-          <div className="mb-4">
-            <select onChange={handleAddProxy} defaultValue="" className="w-full p-3 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 outline-none focus:border-indigo-500 text-sm">
-              <option value="" disabled>➕ 选择并添加 节点/策略组 到此列表...</option>
-              {safeAvailableNames.filter(n => !data.proxies.includes(n)).map(name => <option key={name} value={name}>{String(name)}</option>)}
-            </select>
+
+          {/* 复选样式选择器 */}
+          <div className="mb-4 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-800/50">
+            <div className="p-2 border-b dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center gap-2">
+              <Search className="w-4 h-4 text-slate-400 shrink-0" />
+              <input
+                type="text"
+                value={proxySearch}
+                onChange={e => setProxySearch(e.target.value)}
+                placeholder="搜索节点/策略组..."
+                className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+              />
+            </div>
+            <div className="max-h-52 overflow-y-auto custom-scrollbar p-1">
+              {filteredNames.length === 0 ? (
+                <div className="p-4 text-center text-slate-400 text-sm">无可用的节点或策略组</div>
+              ) : (
+                filteredNames.map(name => {
+                  const checked = data.proxies.includes(name);
+                  return (
+                    <label
+                      key={name}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm ${checked ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300' : 'hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'}`}
+                    >
+                      <div className={`w-4.5 h-4.5 w-[18px] h-[18px] rounded border-2 flex items-center justify-center shrink-0 transition-colors ${checked ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'}`}>
+                        {checked && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <span className="font-mono truncate">{String(name)}</span>
+                      <input type="checkbox" checked={checked} onChange={() => toggleProxy(name)} className="sr-only" />
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
+
+          {/* 已选列表（可拖拽排序） */}
           <div className="border dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
             {data.proxies.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">此策略组目前没有包含任何节点，请从上方添加。</div>
+              <div className="p-8 text-center text-slate-400 text-sm">此策略组目前没有包含任何节点，请从上方勾选添加。</div>
             ) : (
               <ul className="divide-y dark:divide-slate-800 max-h-[300px] overflow-y-auto custom-scrollbar">
                 {data.proxies.map((pName, idx) => {
