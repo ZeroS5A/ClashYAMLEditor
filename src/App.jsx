@@ -324,25 +324,38 @@ export default function App() {
         }
         newGroups.push(groupData);
       }
+      let newRules = prev.rules;
       if (originalName && originalName !== newName) {
         newGroups = newGroups.map(g => ({
           ...g, proxies: g.proxies?.map(pName => pName === originalName ? newName : pName) || []
         }));
+        newRules = prev.rules.map(rule => {
+          const parts = rule.split(',');
+          if (parts.length >= 3 && parts[2].trim() === originalName) {
+            parts[2] = newName;
+            return parts.join(',');
+          }
+          return rule;
+        });
       }
       showToast(`策略组 [${newName}] 已保存`);
-      return { ...prev, 'proxy-groups': newGroups };
+      return { ...prev, 'proxy-groups': newGroups, rules: newRules };
     });
     setEditingGroup(null);
   }, [showAlert, showToast]);
 
   const deleteGroup = useCallback((groupName) => {
-    showConfirm(`确定要删除策略组 [${groupName}] 吗？\n(注意：规则 Rules 中对该组的引用可能需要您手动修改)`, () => {
+    showConfirm(`确定要删除策略组 [${groupName}] 吗？\n(引用该策略组的规则将被自动移除)`, () => {
       setConfig(prev => {
         const newGroups = prev['proxy-groups'].filter(g => g.name !== groupName);
         const cleanedGroups = newGroups.map(g => ({
           ...g, proxies: (g.proxies || []).filter(name => name !== groupName)
         }));
-        return { ...prev, 'proxy-groups': cleanedGroups };
+        const cleanedRules = prev.rules.filter(rule => {
+          const parts = rule.split(',');
+          return !(parts.length >= 3 && parts[2].trim() === groupName);
+        });
+        return { ...prev, 'proxy-groups': cleanedGroups, rules: cleanedRules };
       });
       showToast(`策略组 [${groupName}] 已删除`);
     });
