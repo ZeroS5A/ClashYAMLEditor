@@ -307,6 +307,28 @@ export default function App() {
     });
   }, [showConfirm, showToast]);
 
+  const handleClearAllProxies = useCallback(() => {
+    if (config.proxies.length === 0) {
+      showAlert("当前没有任何节点，无需清空。");
+      return;
+    }
+    showConfirm(
+      `确定要清空全部 ${config.proxies.length} 个节点吗？\n所有节点将被删除，策略组中引用这些节点的条目也将被清理。\n此操作不可撤销！`,
+      () => {
+        setConfig(prev => {
+          const newGroups = prev['proxy-groups'].map(g => ({
+            ...g, proxies: (g.proxies || []).filter(name =>
+              !prev.proxies.some(p => p.name === name)
+            )
+          }));
+          return { ...prev, proxies: [], 'proxy-groups': newGroups };
+        });
+        showToast(`已清空全部节点`);
+      },
+      "清空全部节点"
+    );
+  }, [config.proxies, showConfirm, showAlert, showToast]);
+
   const saveGroup = useCallback((originalName, groupData) => {
     setConfig(prev => {
       let newGroups = [...prev['proxy-groups']];
@@ -534,7 +556,7 @@ export default function App() {
         <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-slate-100 dark:bg-slate-950">
           {activeTab === 'import' && <TabImport yamlText={yamlText} setYamlText={setYamlText} parseError={parseError} setParseError={setParseError} isParsing={isParsing} handleImportText={handleImportText} handleFileUpload={handleFileUpload} onOpenConverter={() => setConverterModalVisible(true)} />}
           {activeTab === 'export' && <TabExport yamlText={yamlText} setYamlText={setYamlText} handleExportText={handleExportText} copyToClipboard={copyToClipboard} handleDownloadFile={handleDownloadFile} handleImportToClash={handleImportToClash} />}
-          {activeTab === 'proxies' && <TabProxies proxies={config.proxies} setLinkModalVisible={setLinkModalVisible} setEditingProxy={setEditingProxy} deleteProxy={deleteProxy} />}
+          {activeTab === 'proxies' && <TabProxies proxies={config.proxies} setLinkModalVisible={setLinkModalVisible} setEditingProxy={setEditingProxy} deleteProxy={deleteProxy} clearAllProxies={handleClearAllProxies} />}
           {activeTab === 'groups' && <TabGroups groups={config['proxy-groups']} setEditingGroup={setEditingGroup} deleteGroup={deleteGroup} reorderGroups={reorderGroups} />}
           {activeTab === 'rules' && <TabRules providers={config['rule-providers']} rules={config.rules} setEditingProvider={setEditingProvider} deleteProvider={deleteProvider} setEditingRule={setEditingRule} deleteRule={deleteRule} moveRuleToTop={moveRuleToTop} moveRuleToBottom={moveRuleToBottom} reorderRules={reorderRules} />}
           {activeTab === 'basic' && <TabBasic config={config} updateBasicConfig={updateBasicConfig} />}
