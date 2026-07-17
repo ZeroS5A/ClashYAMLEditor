@@ -11,6 +11,15 @@ export const DEFAULT_EMPTY_CONFIG = {
 };
 
 export const PROTOCOL_SCHEMAS = {
+  ssr: [
+    {key: 'password', label: '密码 (password)', type: 'string'},
+    {key: 'cipher', label: '加密方式 (cipher)', type: 'string'},
+    {key: 'protocol', label: '协议 (protocol)', type: 'string'},
+    {key: 'protocol-param', label: '协议参数 (protocol-param)', type: 'string'},
+    {key: 'obfs', label: '混淆 (obfs)', type: 'string'},
+    {key: 'obfs-param', label: '混淆参数 (obfs-param)', type: 'string'},
+    {key: 'udp', label: 'UDP转发 (udp)', type: 'boolean'}
+  ],
   ss: [
     {key: 'cipher', label: '加密方式 (cipher)', type: 'string'},
     {key: 'password', label: '密码 (password)', type: 'string'},

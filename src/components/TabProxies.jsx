@@ -1,26 +1,17 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { Server, Link as LinkIcon, Plus, Edit, Trash2, Trash, Activity, Share2, Copy, Check, Zap, AlertCircle, X } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Server, Link as LinkIcon, Plus, Edit, Trash2, Trash, Share2, Copy, Check, AlertCircle } from 'lucide-react';
 import ScrollingText from './ScrollingText';
-import Modal from './Modal';
 import ProxyEditorModal from './ProxyEditorModal';
-import { parseProxyLink, fetchSubscriptionContent } from '../utils/parser';
-import { generateShareLink, testProxyLatency } from '../utils/shareLink';
+import LinkImportModal from './LinkImportModal';
+import { parseProxyLink } from '../utils/parser';
+import { generateShareLink } from '../utils/shareLink';
 
 const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) => {
   const proxies = config.proxies;
-  const controllerUrl = config['external-controller'] || '127.0.0.1:9090';
 
   // ---- 弹窗状态 ----
   const [editingProxy, setEditingProxy] = useState(null);
   const [linkModalVisible, setLinkModalVisible] = useState(false);
-  const [linkText, setLinkText] = useState('');
-  const [isImportingLinks, setIsImportingLinks] = useState(false);
-
-  // ---- 连通性测试状态 ----
-  const [testResults, setTestResults] = useState({});     // { proxyName: { delay, error } }
-  const [isTesting, setIsTesting] = useState(false);
-  const [testProgress, setTestProgress] = useState({ done: 0, total: 0 });
-  const abortRef = useRef(null);
 
   // ---- 导出分享状态 ----
   const [shareTarget, setShareTarget] = useState(null);
@@ -71,8 +62,6 @@ const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) =>
         }));
         return { ...prev, proxies: newProxies, 'proxy-groups': newGroups };
       });
-      // 清理测试结果
-      setTestResults(prev => { const r = { ...prev }; delete r[proxyName]; return r; });
       showToast(`节点 [${proxyName}] 已删除`);
     });
   }, [setConfig, showConfirm, showToast]);
@@ -88,134 +77,39 @@ const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) =>
           }));
           return { ...prev, proxies: [], 'proxy-groups': newGroups };
         });
-        setTestResults({});
         showToast(`已清空全部节点`);
       }, "清空全部节点"
     );
   }, [proxies, setConfig, showAlert, showConfirm, showToast]);
 
   // ================================================================
-  //  链接批量导入（含三级判重）
+  //  链接批量导入（仅按名称匹配：同名更新，不同名新增）
   // ================================================================
 
-  const handleImportLinks = useCallback(async () => {
-    const lines = linkText.split('\n').map(l => l.trim()).filter(l => l);
-    if (lines.length === 0) return;
-    setIsImportingLinks(true);
-    let allProxyLinks = [];
-    const subUrls = [], directLinks = [];
-    lines.forEach(line => { (/^https?:\/\//i.test(line) ? subUrls : directLinks).push(line); });
-    const subErrors = [];
-    for (const url of subUrls) {
-      try { const links = await fetchSubscriptionContent(url); allProxyLinks.push(...links); }
-      catch (e) { console.warn("订阅获取失败:", url, e); subErrors.push(url); }
-    }
-    allProxyLinks.push(...directLinks);
-    const parsedProxies = [], parseErrors = [];
-    allProxyLinks.forEach(link => {
-      try { const proxy = parseProxyLink(link); Object.keys(proxy).forEach(k => proxy[k] === undefined && delete proxy[k]); parsedProxies.push(proxy); }
-      catch (e) { parseErrors.push({ link, error: e.message }); }
-    });
+  const handleImportLinks = useCallback((proxiesToImport) => {
+    let added = 0, updated = 0;
 
-    if (parsedProxies.length > 0) {
-      let addedCount = 0, updatedCount = 0, renamedCount = 0, batchDedupCount = 0;
-      const getCredential = (p) => p.uuid || p.password || '';
-      const normalizePort = (p) => { const port = p.port; return port === undefined || port === null ? '' : String(port); };
-      const findExistingIndex = (proxy, proxyList) => {
-        const cred = getCredential(proxy), port = normalizePort(proxy);
-        if (cred && port) { const idx = proxyList.findIndex(p => p.type === proxy.type && p.server === proxy.server && normalizePort(p) === port && getCredential(p) === cred); if (idx !== -1) return { idx, level: 'credential' }; }
-        if (port) { const idx = proxyList.findIndex(p => p.type === proxy.type && p.server === proxy.server && normalizePort(p) === port); if (idx !== -1) return { idx, level: 'endpoint' }; }
-        if (proxy.name) { const idx = proxyList.findIndex(p => p.name === proxy.name); if (idx !== -1) return { idx, level: 'name' }; }
-        return null;
-      };
+    setConfig(prev => {
+      let newProxies = [...prev.proxies];
 
-      setConfig(prev => {
-        let newProxies = [...prev.proxies];
-        const dedupedParsed = [];
-        parsedProxies.forEach(proxy => { const match = findExistingIndex(proxy, dedupedParsed); if (match && match.level === 'credential') { dedupedParsed[match.idx] = proxy; batchDedupCount++; } else { dedupedParsed.push(proxy); } });
-        dedupedParsed.forEach(proxy => {
-          const match = findExistingIndex(proxy, newProxies);
-          if (match) {
-            if (match.level === 'credential' || match.level === 'endpoint') { if (newProxies[match.idx].name !== proxy.name) renamedCount++; newProxies[match.idx] = proxy; updatedCount++; }
-            else if (match.level === 'name') { proxy.name = proxy.name + ` (${proxy.server}:${normalizePort(proxy)})`; newProxies.push(proxy); addedCount++; }
-          } else { newProxies.push(proxy); addedCount++; }
-        });
-        return { ...prev, proxies: newProxies };
+      proxiesToImport.forEach(proxy => {
+        const { _status, _oldName, ...cleanProxy } = proxy;
+        const idx = newProxies.findIndex(p => p.name === cleanProxy.name);
+        if (idx !== -1) {
+          newProxies[idx] = cleanProxy;
+          updated++;
+        } else {
+          newProxies.push(cleanProxy);
+          added++;
+        }
       });
 
-      let msg = `成功解析 ${parsedProxies.length} 条节点`;
-      const details = [];
-      if (addedCount > 0) details.push(`新增 ${addedCount}`);
-      if (updatedCount > 0) { let d = `更新 ${updatedCount}`; if (renamedCount > 0) d += `（其中 ${renamedCount} 个名称已同步更新）`; details.push(d); }
-      if (batchDedupCount > 0) details.push(`批次内去重 ${batchDedupCount}`);
-      if (details.length > 0) msg += `（${details.join('，')}）`;
-      if (subErrors.length > 0) msg += `，${subErrors.length} 个订阅链接获取失败`;
-      if (parseErrors.length > 0) msg += `，${parseErrors.length} 条链接解析失败`;
-      showToast(msg);
-      setLinkModalVisible(false); setLinkText('');
-    } else {
-      let msg = "未能成功解析任何节点。请检查链接格式。";
-      if (subErrors.length > 0 && subUrls.length > 0) msg = `所有订阅链接获取失败（共 ${subErrors.length} 个），请检查网络或链接是否正确。`;
-      showAlert(msg);
-    }
-    setIsImportingLinks(false);
-  }, [linkText, setConfig, showAlert, showToast]);
+      return { ...prev, proxies: newProxies };
+    });
 
-  // ================================================================
-  //  连通性测试
-  // ================================================================
-
-  const handleStartTest = useCallback(async () => {
-    if (!controllerUrl) {
-      showAlert("未设置 external-controller，请在「基础设置」中先配置控制器地址（如 127.0.0.1:9090）");
-      return;
-    }
-    if (proxies.length === 0) { showAlert("当前没有节点可供测试"); return; }
-
-    setIsTesting(true);
-    setTestResults({});
-    setTestProgress({ done: 0, total: proxies.length });
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    const results = {};
-    for (let i = 0; i < proxies.length; i++) {
-      if (controller.signal.aborted) break;
-      const proxy = proxies[i];
-      const result = await testProxyLatency(proxy.name, controllerUrl);
-      results[proxy.name] = result;
-      setTestResults({ ...results });
-      setTestProgress({ done: i + 1, total: proxies.length });
-    }
-
-    abortRef.current = null;
-    setIsTesting(false);
-    const successCount = Object.values(results).filter(r => r.success).length;
-    showToast(`测试完成：${successCount}/${proxies.length} 个节点可达`);
-  }, [proxies, controllerUrl, showAlert, showToast]);
-
-  const handleStopTest = useCallback(() => {
-    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
-    setIsTesting(false);
-    showToast("测试已中止");
-  }, [showToast]);
-
-  // 延迟色码
-  const getDelayColor = (delay) => {
-    if (!delay) return 'text-slate-400';
-    if (delay < 200) return 'text-emerald-500';
-    if (delay < 500) return 'text-amber-500';
-    if (delay < 1000) return 'text-orange-500';
-    return 'text-red-500';
-  };
-  const getDelayBadge = (name) => {
-    const r = testResults[name];
-    if (!r) return null;
-    if (!r.success) return <span className="text-[10px] text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded" title={r.error}>失败</span>;
-    const cls = getDelayColor(r.delay);
-    return <span className={`text-[10px] font-bold ${cls} bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded`}>{r.delay}ms</span>;
-  };
+    showToast(`已导入 ${proxiesToImport.length} 条节点（新增 ${added}，更新 ${updated}）`);
+    setLinkModalVisible(false);
+  }, [setConfig, showToast]);
 
   // ================================================================
   //  节点导出/分享
@@ -261,26 +155,11 @@ const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) =>
     <div className="pb-8">
       {/* ---- 链接导入弹窗 ---- */}
       {linkModalVisible && (
-        <Modal
-          title="通过链接批量导入/更新节点"
-          onClose={() => { if (!isImportingLinks) setLinkModalVisible(false); }}
-          onSave={isImportingLinks ? undefined : handleImportLinks}
-          saveText={isImportingLinks ? "获取中..." : "解析并导入"}
-          widthClass="max-w-2xl"
-        >
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">支持粘贴多行节点链接，自动识别常用的分享格式。</p>
-          <p className="text-xs text-blue-500 dark:text-blue-400 mb-4">也支持粘贴 http/https 订阅链接，自动获取并解析批量节点。</p>
-          {isImportingLinks && (
-            <div className="flex items-center gap-2 mb-3 text-sm text-blue-600 dark:text-blue-400">
-              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              正在获取订阅内容...
-            </div>
-          )}
-          <textarea value={linkText} onChange={(e) => setLinkText(e.target.value)}
-            placeholder={"vmess://...\ntrojan://...\nss://...\n\nhttps://example.com/sub"}
-            className="w-full h-48 font-mono text-sm p-4 border rounded-xl bg-slate-50 dark:bg-slate-950 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none custom-scrollbar whitespace-pre-wrap disabled:opacity-50"
-            disabled={isImportingLinks} />
-        </Modal>
+        <LinkImportModal
+          existingProxies={proxies}
+          onImport={handleImportLinks}
+          onClose={() => setLinkModalVisible(false)}
+        />
       )}
 
       {/* ---- 节点编辑器弹窗 ---- */}
@@ -371,19 +250,6 @@ const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) =>
             <LinkIcon className="w-4 h-4" /> 通过链接导入/更新节点
           </button>
 
-          {/* 连通性测试按钮 */}
-          {isTesting ? (
-            <button onClick={handleStopTest}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center gap-2 transition-colors">
-              <X className="w-4 h-4" /> 停止测试 ({testProgress.done}/{testProgress.total})
-            </button>
-          ) : (
-            <button onClick={handleStartTest}
-              className="px-4 py-2 bg-white border border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:bg-slate-900 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30 rounded-lg flex items-center gap-2 transition-colors">
-              <Zap className="w-4 h-4" /> 连通性测试
-            </button>
-          )}
-
           <button onClick={handleClearAllProxies}
             className="px-4 py-2 bg-white border border-red-200 text-red-500 hover:bg-red-50 dark:bg-slate-900 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30 rounded-lg flex items-center gap-2 transition-colors">
             <Trash className="w-4 h-4" /> 清空全部节点
@@ -391,29 +257,12 @@ const TabProxies = ({ config, setConfig, showAlert, showConfirm, showToast }) =>
         </div>
       </div>
 
-      {/* ---- 测试进度条 ---- */}
-      {isTesting && (
-        <div className="px-4 md:px-8 mb-4">
-          <div className="flex items-center gap-3 text-sm text-slate-500 mb-2">
-            <Activity className="w-4 h-4 animate-pulse text-amber-500" />
-            正在测试节点延迟（通过 Clash REST API）...
-          </div>
-          <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-            <div className="bg-amber-500 h-full rounded-full transition-all duration-300"
-              style={{ width: `${testProgress.total > 0 ? (testProgress.done / testProgress.total) * 100 : 0}%` }} />
-          </div>
-        </div>
-      )}
-
       {/* ---- 节点卡片网格 ---- */}
       <div className="px-4 md:px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
         {proxies.map((proxy, idx) => (
           <div key={idx} className="bg-white dark:bg-slate-900 border dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow group flex flex-col h-full overflow-hidden">
             <div className="flex-1 overflow-hidden mb-4">
-              <div className="flex items-center gap-2 mb-2">
-                <ScrollingText text={String(proxy.name)} className="font-bold text-lg text-slate-800 dark:text-white" />
-                {getDelayBadge(proxy.name)}
-              </div>
+              <ScrollingText text={String(proxy.name)} className="font-bold text-lg text-slate-800 dark:text-white mb-2" />
               <p className="text-sm text-slate-500 dark:text-slate-400 font-mono truncate" title={`${String(proxy.server)}:${String(proxy.port)}`}>
                 {String(proxy.server)}:{String(proxy.port)}
               </p>

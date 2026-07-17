@@ -27,6 +27,14 @@ export const safeDecodeBase64 = (str) => {
   }
 };
 
+// --- 高熵随机名称（避免大批量导入时名称碰撞导致去重误判）---
+let _nameSeq = 0;
+const randomName = (prefix) => {
+  _nameSeq++;
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${prefix}-${rand}${_nameSeq}`;
+};
+
 // --- 核心解析引擎 (支持复杂参数提取) ---
 export const parseProxyLink = (link) => {
   try {
@@ -142,7 +150,7 @@ export const parseProxyLink = (link) => {
       const jsonStr = safeDecodeBase64(link.slice(8));
       const data = JSON.parse(jsonStr);
       const proxy = {
-        name: data.ps || `VMess-${Math.floor(Math.random()*1000)}`,
+        name: data.ps || randomName('VMess'),
         type: 'vmess',
         server: data.add,
         port: Number(data.port),
@@ -205,7 +213,7 @@ export const parseProxyLink = (link) => {
       }
 
       const proxy = {
-        name: decodeURIComponent(url.hash.slice(1)) || `${type}-${Math.floor(Math.random()*1000)}`,
+        name: decodeURIComponent(url.hash.slice(1)) || randomName(type),
         type: type,
         server: url.hostname,
         port: port,
@@ -223,9 +231,68 @@ export const parseProxyLink = (link) => {
       return proxy;
     }
 
+    if (link.startsWith('ssr://')) {
+      // SSR 格式: ssr://base64(server:port:protocol:method:obfs:password_base64/?params...)
+      const base64Part = link.slice(6);
+      let ssrText;
+      try {
+        ssrText = safeDecodeBase64(base64Part);
+      } catch (e) {
+        throw new Error("SSR Base64 解码失败");
+      }
+
+      // 分离主体和参数
+      let mainPart = ssrText, paramsPart = '';
+      if (ssrText.includes('/?')) {
+        const idx = ssrText.indexOf('/?');
+        mainPart = ssrText.slice(0, idx);
+        paramsPart = ssrText.slice(idx + 2);
+      }
+
+      const parts = mainPart.split(':');
+      if (parts.length < 6) throw new Error("SSR 链接格式不完整");
+
+      const [host, port, protocol, method, obfs, pwdBase64] = parts;
+      // SSR 链接里的密码是单独 base64 编码的
+      let password = pwdBase64;
+      try { password = safeDecodeBase64(pwdBase64); } catch (_) {}
+
+      const proxy = {
+        name: randomName('SSR'),
+        type: 'ssr',
+        server: host,
+        port: Number(port) || 443,
+        cipher: method,
+        password: password,
+        protocol: protocol,
+        'protocol-param': '',
+        obfs: obfs,
+        'obfs-param': '',
+      };
+
+      // 解析参数
+      if (paramsPart) {
+        const qs = new URLSearchParams(paramsPart);
+        const obfsparam = qs.get('obfsparam');
+        if (obfsparam) {
+          try { proxy['obfs-param'] = safeDecodeBase64(obfsparam); } catch (_) { proxy['obfs-param'] = obfsparam; }
+        }
+        const protoparam = qs.get('protoparam');
+        if (protoparam) {
+          try { proxy['protocol-param'] = safeDecodeBase64(protoparam); } catch (_) { proxy['protocol-param'] = protoparam; }
+        }
+        const remarks = qs.get('remarks');
+        if (remarks) {
+          try { proxy.name = safeDecodeBase64(remarks); } catch (_) { proxy.name = remarks; }
+        }
+      }
+
+      return proxy;
+    }
+
     if (link.startsWith('ss://')) {
       let mainPart = link.slice(5);
-      let name = `SS-${Math.floor(Math.random()*1000)}`;
+      let name = randomName('SS');
 
       // 提取 #fragment（名称）
       let queryPart = '';
@@ -302,7 +369,7 @@ export const fetchSubscriptionContent = async (url) => {
   try {
     const decoded = safeDecodeBase64(text.trim());
     // 验证解码结果是否包含有效的协议链接
-    if (decoded.match(/(vmess|trojan|vless|ss|hysteria2|hy2):\/\//)) {
+    if (decoded.match(/(vmess|trojan|vless|ssr|ss|hysteria2|hy2):\/\//)) {
       return decoded.split('\n').map(l => l.trim()).filter(l => l);
     }
   } catch (e) {
@@ -311,7 +378,7 @@ export const fetchSubscriptionContent = async (url) => {
 
   // 直接按行分割（有些订阅直接返回明文链接）
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-  if (lines.some(l => /^(vmess|trojan|vless|ss|hysteria2|hy2):\/\//.test(l))) {
+  if (lines.some(l => /^(vmess|trojan|vless|ssr|ss|hysteria2|hy2):\/\//.test(l))) {
     return lines;
   }
 

@@ -1,19 +1,16 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { Download, Copy, ArrowRight, Check, Zap } from 'lucide-react';
 
 const TabExport = ({ yamlText, setYamlText, config, showAlert, showToast }) => {
 
-  // 首次挂载且 yamlText 为空时自动生成
-  const didAutoGenerate = useRef(false);
+  // 每次切换到导出页面时自动刷新 YAML 文本
   useEffect(() => {
-    if (!didAutoGenerate.current && !yamlText) {
-      try {
-        const dumped = window.jsyaml.dump(config, { indent: 2, lineWidth: -1, noRefs: true });
-        setYamlText(dumped);
-        didAutoGenerate.current = true;
-      } catch (_) { /* ignore */ }
-    }
-  }, [yamlText, config, setYamlText]);
+    try {
+      const dumped = window.jsyaml.dump(config, { indent: 2, lineWidth: -1, noRefs: true });
+      setYamlText(dumped);
+      showToast('已同步最新配置文本');
+    } catch (_) { /* ignore */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- 生成 YAML 文本 ----
   const handleExportText = useCallback(() => {

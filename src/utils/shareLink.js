@@ -1,3 +1,14 @@
+// --- Base64 编码（UTF-8 安全）---
+function base64Encode(str) {
+  try {
+    return btoa(String(str));
+  } catch (_) {
+    // 含非 ASCII 字符时走 UTF-8 路径
+    const bytes = new TextEncoder().encode(String(str));
+    return btoa(String.fromCharCode(...bytes));
+  }
+}
+
 // --- 根据代理对象生成分享链接（parser.js 的逆向）---
 export function generateShareLink(proxy) {
   const { name, type, server, port, ...rest } = proxy;
@@ -125,6 +136,20 @@ export function generateShareLink(proxy) {
     }
 
     // ============================================================
+    //  SSR
+    // ============================================================
+    case 'ssr': {
+      const pwdB64 = base64Encode(rest.password || '');
+      const main = `${server}:${port || 443}:${rest.protocol || 'origin'}:${rest.cipher || 'aes-256-cfb'}:${rest.obfs || 'plain'}:${pwdB64}`;
+      const params = [];
+      if (rest['obfs-param']) params.push(`obfsparam=${base64Encode(rest['obfs-param'])}`);
+      if (rest['protocol-param']) params.push(`protoparam=${base64Encode(rest['protocol-param'])}`);
+      if (encodedName) params.push(`remarks=${base64Encode(name)}`);
+      let url = 'ssr://' + base64Encode(main + (params.length > 0 ? '/?' + params.join('&') : ''));
+      return url;
+    }
+
+    // ============================================================
     //  TUIC / WireGuard / 其他 → 简单 URI 格式
     // ============================================================
     case 'tuic': {
@@ -137,21 +162,7 @@ export function generateShareLink(proxy) {
     }
 
     default:
-      throw new Error(`不支持的协议类型: ${type}（仅 vmess/trojan/vless/ss/hysteria2/tuic 可导出链接）`);
+      throw new Error(`不支持的协议类型: ${type}（仅 vmess/trojan/vless/ss/ssr/hysteria2/tuic 可导出链接）`);
   }
 }
 
-// --- 通过 Clash REST API 测试节点延迟 ---
-export async function testProxyLatency(proxyName, controllerUrl, timeout = 5000) {
-  const testUrl = 'http://www.gstatic.com/generate_204';
-  const apiUrl = `http://${controllerUrl}/proxies/${encodeURIComponent(proxyName)}/delay?timeout=${timeout}&url=${encodeURIComponent(testUrl)}`;
-
-  try {
-    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(timeout + 2000) });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    return { success: true, delay: data.delay };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
-}
