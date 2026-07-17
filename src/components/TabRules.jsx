@@ -1,9 +1,27 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Search, Plus, GripVertical, Edit, Trash2, ArrowRight, ChevronsUp, ChevronsDown, AlertCircle, X } from 'lucide-react';
 import { RULE_PROVIDER_TEMPLATES } from '../constants/templates';
 import { parseRuleString } from '../utils/parser';
+import RuleProviderEditorModal from './RuleProviderEditorModal';
+import RuleEditorModal from './RuleEditorModal';
 
-const TabRules = ({ providers, rules, setEditingProvider, deleteProvider, setEditingRule, deleteRule, moveRuleToTop, moveRuleToBottom, reorderRules }) => {
+const TabRules = ({ config, setConfig, showAlert, showConfirm, showToast }) => {
+  const providers = config['rule-providers'] || {};
+  const rules = config.rules || [];
+
+  // ---- 派生数据 ----
+  const allAvailableNodeNames = useMemo(() => [
+    ...config.proxies.map(p => p.name || 'Unknown'),
+    ...config['proxy-groups'].map(g => g.name || 'Unknown')
+  ], [config.proxies, config['proxy-groups']]);
+  const allTargetNames = useMemo(() => ['DIRECT', 'REJECT', ...allAvailableNodeNames], [allAvailableNodeNames]);
+  const allProviderNames = useMemo(() => Object.keys(providers), [providers]);
+
+  // ---- 弹窗状态 ----
+  const [editingProvider, setEditingProvider] = useState(null);
+  const [editingRule, setEditingRule] = useState(null);
+
+  // ---- 搜索 & 懒加载 ----
   const [ruleSearch, setRuleSearch] = useState('');
   const [visibleRuleCount, setVisibleRuleCount] = useState(100);
   const [draggedRuleIdx, setDraggedRuleIdx] = useState(null);
@@ -25,7 +43,20 @@ const TabRules = ({ providers, rules, setEditingProvider, deleteProvider, setEdi
   }, [processedRules, ruleSearch]);
   const visibleRules = useMemo(() => filteredRules.slice(0, visibleRuleCount), [filteredRules, visibleRuleCount]);
 
-  const handleDragStart = (e, originalIdx) => { if (ruleSearch) { e.preventDefault(); return; } setDraggedRuleIdx(originalIdx); };
+  // ---- 拖拽 ----
+  const reorderRules = useCallback((draggedIdx, targetIdx) => {
+    setConfig(prev => {
+      let reordered = [...prev.rules];
+      const [draggedItem] = reordered.splice(draggedIdx, 1);
+      reordered.splice(targetIdx, 0, draggedItem);
+      return { ...prev, rules: reordered };
+    });
+  }, [setConfig]);
+
+  const handleDragStart = (e, originalIdx) => {
+    if (ruleSearch) { e.preventDefault(); return; }
+    setDraggedRuleIdx(originalIdx);
+  };
   const handleDragOver = (e) => e.preventDefault();
   const handleDrop = (e, targetOriginalIdx) => {
     e.preventDefault();
@@ -35,15 +66,144 @@ const TabRules = ({ providers, rules, setEditingProvider, deleteProvider, setEdi
   };
   const handleDragEnd = () => setDraggedRuleIdx(null);
 
+  // ================================================================
+  //  规则集 Provider CRUD
+  // ================================================================
+
+  const saveProvider = useCallback((originalName, name, data, targetName) => {
+    if (!name) return showAlert("保存失败：规则集名称不能为空");
+    setConfig(prev => {
+      let newProviders = { ...prev['rule-providers'] };
+      if (originalName && originalName !== name) delete newProviders[originalName];
+      newProviders[name] = data;
+
+      let newRules = [...prev.rules];
+      if (originalName && originalName !== name) {
+        newRules = newRules.map(r => {
+          if (typeof r !== 'string') return r;
+          return r.startsWith(`RULE-SET,${originalName},`) ? r.replace(`RULE-SET,${originalName},`, `RULE-SET,${name},`) : r;
+        });
+      }
+      if (targetName) {
+        const rulePrefix = `RULE-SET,${name},`;
+        const existingIdx = newRules.findIndex(r => typeof r === 'string' && r.startsWith(rulePrefix));
+        if (existingIdx !== -1) {
+          const parts = newRules[existingIdx].split(',');
+          parts[2] = targetName;
+          newRules[existingIdx] = parts.join(',');
+        } else {
+          newRules.unshift(`RULE-SET,${name},${targetName}`);
+        }
+      }
+      showToast(`规则集 [${name}] 已保存${targetName ? `，已绑定策略[${targetName}]` : ''}`);
+      return { ...prev, 'rule-providers': newProviders, rules: newRules };
+    });
+    setEditingProvider(null);
+  }, [setConfig, showAlert, showToast]);
+
+  const deleteProvider = useCallback((name) => {
+    showConfirm(`确定要删除规则集 [${name}] 吗？\n(记得同步删除引用了该规则集的路由规则)`, () => {
+      setConfig(prev => {
+        let newProviders = { ...prev['rule-providers'] };
+        delete newProviders[name];
+        return { ...prev, 'rule-providers': newProviders };
+      });
+      showToast(`规则集 [${name}] 已删除`);
+    });
+  }, [setConfig, showConfirm, showToast]);
+
+  // ================================================================
+  //  路由规则 Rule CRUD
+  // ================================================================
+
+  const saveRule = useCallback((originalIdx, ruleString, actionType) => {
+    setConfig(prev => {
+      let newRules = [...prev.rules];
+      if (actionType === 'update') {
+        newRules[originalIdx] = ruleString;
+      } else if (actionType === 'top') {
+        newRules.unshift(ruleString);
+      } else if (actionType === 'bottom') {
+        const matchIdx = newRules.findIndex(r => typeof r === 'string' && r.startsWith('MATCH,'));
+        if (matchIdx !== -1) newRules.splice(matchIdx, 0, ruleString);
+        else newRules.push(ruleString);
+      }
+      return { ...prev, rules: newRules };
+    });
+    setEditingRule(null);
+    showToast("路由规则已保存");
+  }, [setConfig, showToast]);
+
+  const deleteRule = useCallback((originalIdx) => {
+    setConfig(prev => {
+      let newRules = [...prev.rules];
+      newRules.splice(originalIdx, 1);
+      return { ...prev, rules: newRules };
+    });
+  }, [setConfig]);
+
+  const moveRuleToTop = useCallback((originalIdx) => {
+    if (originalIdx === 0) return;
+    setConfig(prev => {
+      let newRules = [...prev.rules];
+      const [item] = newRules.splice(originalIdx, 1);
+      newRules.unshift(item);
+      return { ...prev, rules: newRules };
+    });
+  }, [setConfig]);
+
+  const moveRuleToBottom = useCallback((originalIdx) => {
+    setConfig(prev => {
+      if (originalIdx === prev.rules.length - 1) return prev;
+      let newRules = [...prev.rules];
+      const [item] = newRules.splice(originalIdx, 1);
+      const matchIdx = newRules.findIndex(r => typeof r === 'string' && r.startsWith('MATCH,'));
+      if (matchIdx !== -1) newRules.splice(matchIdx, 0, item);
+      else newRules.push(item);
+      return { ...prev, rules: newRules };
+    });
+  }, [setConfig]);
+
+  // ================================================================
+  //  JSX
+  // ================================================================
+
   return (
     <div className="p-4 md:p-8">
+      {/* ---- 弹窗 ---- */}
+      {editingProvider && (
+        <RuleProviderEditorModal
+          providerName={editingProvider.name}
+          providerData={editingProvider.data}
+          initialTarget={editingProvider.originalName
+            ? (rules.find(r => typeof r === 'string' && r.startsWith(`RULE-SET,${editingProvider.originalName},`))?.split(',')[2] || '')
+            : ''}
+          allTargetNames={allTargetNames}
+          onClose={() => setEditingProvider(null)}
+          onSave={(name, data, targetName) => saveProvider(editingProvider.originalName, name, data, targetName)}
+          showAlert={showAlert}
+        />
+      )}
+      {editingRule && (
+        <RuleEditorModal
+          ruleData={editingRule.data}
+          isNew={editingRule.idx === -1}
+          allTargetNames={allTargetNames}
+          allProviderNames={allProviderNames}
+          onClose={() => setEditingRule(null)}
+          onSave={(data, actionType) => saveRule(editingRule.idx, data, actionType)}
+          showAlert={showAlert}
+        />
+      )}
+
+      {/* ---- 规则集 (Providers) ---- */}
       <div className="mb-10">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-white">规则集 (Providers) <span className="text-sm font-normal text-slate-400">({Object.keys(providers || {}).length})</span></h2>
+          <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-white">规则集 (Providers) <span className="text-sm font-normal text-slate-400">({Object.keys(providers).length})</span></h2>
           <button onClick={() => setEditingProvider({ originalName: null, name: 'new-provider', data: Object.assign({}, RULE_PROVIDER_TEMPLATES[0].data) })} className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-700 rounded-lg flex items-center gap-1.5 text-sm transition-colors"><Plus className="w-4 h-4" /> 添加规则集</button>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {Object.entries(providers || {}).map(([name, data], idx) => {
+          {Object.entries(providers).map(([name, data], idx) => {
               const matchedRule = rules.find(r => typeof r === 'string' && r.startsWith(`RULE-SET,${name},`));
               const matchedTarget = matchedRule ? matchedRule.split(',')[2] : null;
               return (
@@ -66,9 +226,11 @@ const TabRules = ({ providers, rules, setEditingProvider, deleteProvider, setEdi
               </div>
               );
           })}
-          {Object.keys(providers || {}).length === 0 && <div className="col-span-full py-8 text-center text-slate-400 border-2 border-dashed dark:border-slate-800 rounded-xl text-sm">暂无规则集配置，点击右上角添加。</div>}
+          {Object.keys(providers).length === 0 && <div className="col-span-full py-8 text-center text-slate-400 border-2 border-dashed dark:border-slate-800 rounded-xl text-sm">暂无规则集配置，点击右上角添加。</div>}
         </div>
       </div>
+
+      {/* ---- 路由规则 (Rules) ---- */}
       <div>
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
           <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-white shrink-0">路由规则 (Rules) <span className="text-sm font-normal text-slate-400">({filteredRules.length} / {rules.length})</span></h2>

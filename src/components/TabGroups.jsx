@@ -1,8 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { Layers, Plus, GripVertical, Edit, Trash2, AlertCircle } from 'lucide-react';
+import ProxyGroupEditorModal from './ProxyGroupEditorModal';
 
-const TabGroups = ({ groups, setEditingGroup, deleteGroup, reorderGroups }) => {
+const TabGroups = ({ config, setConfig, showAlert, showConfirm, showToast }) => {
+  const groups = config['proxy-groups'];
+
+  // ---- 派生数据 ----
+  const allAvailableNodeNames = useMemo(() => [
+    ...config.proxies.map(p => p.name || 'Unknown'),
+    ...groups.map(g => g.name || 'Unknown')
+  ], [config.proxies, groups]);
+
+  // ---- 弹窗状态 ----
+  const [editingGroup, setEditingGroup] = useState(null);
+
+  // ---- 拖拽排序 ----
   const [draggedIdx, setDraggedIdx] = useState(null);
+
+  const reorderGroups = useCallback((draggedIdx, targetIdx) => {
+    setConfig(prev => {
+      const newGroups = [...prev['proxy-groups']];
+      const [item] = newGroups.splice(draggedIdx, 1);
+      newGroups.splice(targetIdx, 0, item);
+      return { ...prev, 'proxy-groups': newGroups };
+    });
+  }, [setConfig]);
 
   const onDragStart = (e, idx) => setDraggedIdx(idx);
   const onDragOver = (e) => e.preventDefault();
@@ -14,8 +36,84 @@ const TabGroups = ({ groups, setEditingGroup, deleteGroup, reorderGroups }) => {
   };
   const onDragEnd = () => setDraggedIdx(null);
 
+  // ================================================================
+  //  策略组 CRUD
+  // ================================================================
+
+  const saveGroup = useCallback((originalName, groupData) => {
+    setConfig(prev => {
+      let newGroups = [...prev['proxy-groups']];
+      const newName = groupData.name;
+      if (originalName) {
+        if (originalName !== newName && newGroups.some(g => g.name === newName)) {
+          showAlert("保存失败：策略组名称已存在！");
+          return prev;
+        }
+        newGroups = newGroups.map(g => g.name === originalName ? groupData : g);
+      } else {
+        if (newGroups.some(g => g.name === newName)) {
+          showAlert("保存失败：策略组名称已存在！");
+          return prev;
+        }
+        newGroups.push(groupData);
+      }
+      let newRules = prev.rules;
+      if (originalName && originalName !== newName) {
+        // 同步更新策略组内部的引用
+        newGroups = newGroups.map(g => ({
+          ...g, proxies: g.proxies?.map(pName => pName === originalName ? newName : pName) || []
+        }));
+        // 同步更新路由规则中的引用
+        newRules = prev.rules.map(rule => {
+          const parts = rule.split(',');
+          if (parts.length >= 3 && parts[2].trim() === originalName) {
+            parts[2] = newName;
+            return parts.join(',');
+          }
+          return rule;
+        });
+      }
+      showToast(`策略组 [${newName}] 已保存`);
+      return { ...prev, 'proxy-groups': newGroups, rules: newRules };
+    });
+    setEditingGroup(null);
+  }, [setConfig, showAlert, showToast]);
+
+  const deleteGroup = useCallback((groupName) => {
+    showConfirm(`确定要删除策略组 [${groupName}] 吗？\n(引用该策略组的规则将被自动移除)`, () => {
+      setConfig(prev => {
+        const newGroups = prev['proxy-groups'].filter(g => g.name !== groupName);
+        const cleanedGroups = newGroups.map(g => ({
+          ...g, proxies: (g.proxies || []).filter(name => name !== groupName)
+        }));
+        const cleanedRules = prev.rules.filter(rule => {
+          const parts = rule.split(',');
+          return !(parts.length >= 3 && parts[2].trim() === groupName);
+        });
+        return { ...prev, 'proxy-groups': cleanedGroups, rules: cleanedRules };
+      });
+      showToast(`策略组 [${groupName}] 已删除`);
+    });
+  }, [setConfig, showConfirm, showToast]);
+
+  // ================================================================
+  //  JSX
+  // ================================================================
+
   return (
     <div className="pb-8">
+      {/* ---- 策略组编辑器弹窗 ---- */}
+      {editingGroup && (
+        <ProxyGroupEditorModal
+          group={editingGroup.data}
+          allAvailableNames={allAvailableNodeNames}
+          onClose={() => setEditingGroup(null)}
+          onSave={(data) => saveGroup(editingGroup.originalName, data)}
+          showAlert={showAlert}
+        />
+      )}
+
+      {/* ---- 页面主体 ---- */}
       <div className="sticky top-0 z-20 bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-md px-4 md:px-8 py-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
         <h2 className="text-2xl font-bold flex items-center gap-2"><Layers className="w-6 h-6 text-indigo-500" /> 策略组管理 ({groups.length})</h2>
         <button onClick={() => setEditingGroup({ originalName: null, data: { name: '新策略组', type: 'select', proxies: [] } })} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 transition-colors"><Plus className="w-4 h-4" /> 添加策略组</button>
