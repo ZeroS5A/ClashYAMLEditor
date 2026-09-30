@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, FileJson, AlertCircle, Layers } from 'lucide-react';
-import { DEFAULT_EMPTY_CONFIG } from '../constants/templates';
+import { normalizeConfig } from '../utils/configShape';
 import SubscriptionConverterModal from './SubscriptionConverterModal';
 
-const TabImport = ({ yamlText, setYamlText, parseError, setParseError, config, setConfig, showAlert, showToast, setActiveTab }) => {
+const TabImport = ({ yamlText, setYamlText, parseError, setParseError, setConfig, showAlert, showToast, setActiveTab }) => {
   const fileInputRef = useRef(null);
   const [isParsing, setIsParsing] = useState(false);
   const [converterModalVisible, setConverterModalVisible] = useState(false);
@@ -15,19 +15,22 @@ const TabImport = ({ yamlText, setYamlText, parseError, setParseError, config, s
     setTimeout(() => {
       try {
         const parsed = window.jsyaml.load(text);
-        if (typeof parsed !== 'object' || parsed === null) throw new Error("无效的 YAML 格式");
+        const result = normalizeConfig(parsed);
 
-        const safeConfig = {
-          ...DEFAULT_EMPTY_CONFIG,
-          ...parsed,
-          proxies: parsed.proxies || [],
-          'proxy-groups': parsed['proxy-groups'] || [],
-          'rule-providers': parsed['rule-providers'] || {},
-          rules: parsed.rules || []
-        };
+        if (!result.ok) {
+          setParseError("解析失败: " + result.error);
+          return;
+        }
 
-        setConfig(safeConfig);
-        showToast('配置解析成功');
+        setConfig(result.config);
+        if (result.warnings.length > 0) {
+          // 结构有问题但已安全回落，明确告知用户而不是静默吞掉
+          setParseError('已导入，但有以下内容被忽略：\n· ' + result.warnings.join('\n· '));
+          showToast('配置已导入（部分无效内容已忽略）');
+        } else {
+          setParseError('');
+          showToast('配置解析成功');
+        }
         setActiveTab('proxies');
       } catch (err) {
         setParseError("解析失败: " + err.message);
@@ -65,7 +68,7 @@ const TabImport = ({ yamlText, setYamlText, parseError, setParseError, config, s
       setYamlText(text);
       applyYamlTextAsync(text);
       setConverterModalVisible(false);
-    } catch (e) {
+    } catch {
       showAlert("转换失败，请检查链接或网络状态。");
     } finally {
       setIsParsing(false);
@@ -108,7 +111,7 @@ const TabImport = ({ yamlText, setYamlText, parseError, setParseError, config, s
         <textarea value={yamlText} onChange={(e) => setYamlText(e.target.value)} placeholder="在此粘贴你的 YAML 内容..." className="w-full h-[60vh] font-mono text-sm p-4 border rounded-xl bg-slate-50 dark:bg-slate-950 dark:border-slate-800 focus:ring-2 focus:ring-blue-500 outline-none custom-scrollbar whitespace-pre" />
         {parseError && (
           <div className="mt-4 p-4 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded-xl flex items-start gap-2">
-            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" /><p className="text-sm font-medium">{parseError}</p>
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" /><p className="text-sm font-medium whitespace-pre-wrap">{parseError}</p>
           </div>
         )}
         <button onClick={handleImportText} disabled={isParsing} className="mt-6 w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl transition-colors shadow-md shadow-blue-500/20 flex items-center justify-center gap-2">
