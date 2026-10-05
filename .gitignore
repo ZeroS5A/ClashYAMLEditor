@@ -24,3 +24,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+.npm-cache
+.yarn-cache
+.lock-sync
+test-results
+playwright-report

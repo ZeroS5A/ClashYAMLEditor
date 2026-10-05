@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import Modal from './Modal';
+import Modal from '../common/Modal';
 
 // ---- 客户端类型 (target) ----
 const targetOptions = [
@@ -65,7 +65,7 @@ const optionLabels = {
 };
 
 const defaultOptions = {
-  new_name: true, scv: true, udp: true, tfo: false, expand: true,
+  new_name: true, scv: false, udp: true, tfo: false, expand: true,
   emoji: true, add_emoji: true, remove_emoji: false, append_type: true,
   append_info: true, sort: false, list: false, script: false,
   classic: false, tls13: false, fdn: false, strict: false,
@@ -108,10 +108,10 @@ const remoteConfigs = [
   }
 ];
 
-const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
+const SubscriptionConverterModal = ({ onClose, onConvert, showAlert, defaultTarget = 'clashmeta', busy }) => {
   const [subUrl, setSubUrl] = useState('');
   const [backendUrl, setBackendUrl] = useState('https://192.168.xx.xx:25500');
-  const [target, setTarget] = useState('clash');
+  const [target, setTarget] = useState(defaultTarget);
   const [configSelect, setConfigSelect] = useState('https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full_MultiMode.ini');
   const [customConfigUrl, setCustomConfigUrl] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
@@ -142,12 +142,15 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
         return;
     }
 
-    let finalLink = `${backendUrl}/sub?target=${target}&url=${sub}&config=${encodeURIComponent(configUrl)}`;
+    if (!['clash', 'clashmeta', 'clashr'].includes(target)) return showAlert('当前编辑器仅导入 Clash YAML，请选择 Clash 或 Mihomo 目标。');
+    let endpoint;
+    try { endpoint = new URL(backendUrl); if (!['http:', 'https:'].includes(endpoint.protocol)) throw new Error(); } catch { return showAlert('请输入有效的转换后端 HTTP(S) 地址'); }
+    let finalLink = `${endpoint.href.replace(/\/$/, '')}/sub?target=${target}&url=${sub}&config=${encodeURIComponent(configUrl)}`;
 
     // 布尔选项
     Object.entries(options).forEach(([key, val]) => {
         if (val) finalLink += `&${key}=true`;
-        else if (key === 'insert') finalLink += `&${key}=false`; // insert 默认关闭时也显式传 false
+        else finalLink += `&${key}=false`; // Explicit false must override backend defaults.
     });
 
     // 额外文本参数
@@ -163,6 +166,7 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
   };
 
   const handleFinalImport = () => {
+      if (!generatedLink) return showAlert('请先生成转换链接');
       onConvert(generatedLink);
   };
 
@@ -179,7 +183,7 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
             生成链接
           </button>
           {generatedLink && (
-            <button onClick={handleFinalImport} className="px-4 py-2 rounded-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors flex items-center gap-2">
+            <button disabled={busy || !generatedLink} onClick={handleFinalImport} className="px-4 py-2 rounded-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors flex items-center gap-2">
               导入配置
             </button>
           )}
@@ -191,6 +195,7 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
         {/* 订阅链接 */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">订阅链接或节点 (批量导入，多链接换行分隔)</label>
+          <p className="text-xs text-amber-600 mb-2">转换会将订阅地址和其中的凭证发送给指定后端，请使用自己的或可信后端。跳过证书验证默认关闭。</p>
           <textarea rows="3" value={subUrl} onChange={(e) => setSubUrl(e.target.value)} className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" placeholder="https://example.com/sub?...&#10;ss://...&#10;vmess://..." />
         </div>
 
@@ -203,9 +208,9 @@ const SubscriptionConverterModal = ({ onClose, onConvert, showAlert }) => {
           <div>
             <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">客户端类型 (Target)</label>
             <select value={target} onChange={(e) => setTarget(e.target.value)} className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-950">
-              {targetOptions.map(group => (
+              {targetOptions.filter(group => group.group === "Clash 系列" || group.group === "Mihomo / Meta 系列").map(group => (
                 <optgroup key={group.group} label={group.group}>
-                  {group.items.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  {group.items.filter(item => ['clash', 'clashmeta', 'clashr'].includes(item.value)).map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </optgroup>
               ))}
             </select>

@@ -1,88 +1,57 @@
-import { DEFAULT_EMPTY_CONFIG } from '../constants/templates';
+export const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/**
- * 校验并规范化从用户处导入的配置对象。
- *
- * 目的：YAML 是用户可控的，`proxies: {}` / `rules: "abc"` 这类写法会让后续
- * 的 `.map` / `.length` 直接抛错并整页崩溃。这里统一收口成可信形状。
- *
- * @returns {{ ok: true, config: object, warnings: string[] } | { ok: false, error: string }}
- */
-export const normalizeConfig = (parsed) => {
-  if (parsed === null || parsed === undefined) {
-    return { ok: false, error: '内容为空，没有可解析的配置' };
+// Reject malformed input atomically, without discarding user fields or injecting network defaults.
+export function normalizeConfig(parsed) {
+  const errors = [];
+  if (!isMap(parsed)) return { ok: false, error: '顶层结构必须是键值对，且内容不能为空' };
+  const active = new WeakSet(), visited = new WeakMap();
+  function inspect(value, path, depth = 0) {
+    if (!value || typeof value !== 'object') return 1;
+    if (depth > 100 || active.has(value)) { errors.push(`${path}: 不支持循环引用或超过 100 层的嵌套`); return 0; }
+    if (visited.has(value)) return visited.get(value);
+    active.add(value);
+    let size = 1;
+    for (const [key, item] of Object.entries(value)) {
+      size += inspect(item, `${path}.${key}`, depth + 1);
+      if (size > 1000000) { errors.push(`${path}: 配置或 YAML 别名展开过大，请拆分配置`); break; }
+    }
+    visited.set(value, size);
+    active.delete(value);
+    return size;
   }
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {
-      ok: false,
-      error: `顶层结构必须是键值对（当前是${Array.isArray(parsed) ? '数组' : typeof parsed}）`,
-    };
-  }
-
-  const warnings = [];
-
-  // 缺失 / 类型错误的一律回落到默认空值，保证下游可以安全使用
-  const arrayField = (key) => {
-    const value = parsed[key];
-    if (value === undefined || value === null) return DEFAULT_EMPTY_CONFIG[key];
-    if (Array.isArray(value)) return value;
-    warnings.push(`字段「${key}」应为列表，已忽略无效内容`);
-    return DEFAULT_EMPTY_CONFIG[key];
+  inspect(parsed, 'config');
+  const stringList = (value, path) => {
+    if (!Array.isArray(value) || value.some(v => typeof v !== 'string')) errors.push(`${path}: 应为字符串列表`);
   };
-
-  const mapField = (key) => {
-    const value = parsed[key];
-    if (value === undefined || value === null) return DEFAULT_EMPTY_CONFIG[key];
-    if (typeof value === 'object' && !Array.isArray(value)) return value;
-    warnings.push(`字段「${key}」应为键值对，已忽略无效内容`);
-    return DEFAULT_EMPTY_CONFIG[key];
-  };
-
-  const proxies = arrayField('proxies');
-  const proxyGroups = arrayField('proxy-groups');
-  const rules = arrayField('rules');
-  const ruleProviders = mapField('rule-providers');
-
-  // 过滤器不能是单个对象，否则 Clash 侧会报错，这里提前提示
-  const filters = parsed.filters;
-  if (filters !== undefined && filters !== null && (typeof filters !== 'object' || Array.isArray(filters))) {
-    warnings.push('字段「filters」应为键值对，已忽略无效内容');
+  for (const key of ['proxies', 'proxy-groups', 'rules']) if (parsed[key] !== undefined && !Array.isArray(parsed[key])) errors.push(`${key}: 应为列表`);
+  for (const key of ['rule-providers', 'proxy-providers', 'dns', 'tun', 'sniffer', 'hosts', 'profile', 'sub-rules']) if (parsed[key] !== undefined && !isMap(parsed[key])) errors.push(`${key}: 应为键值对`);
+  for (const key of ['proxies', 'proxy-groups']) {
+    if (!Array.isArray(parsed[key])) continue;
+    parsed[key].forEach((entry, index) => {
+      const path = `${key}[${index}]`;
+      if (!isMap(entry)) { errors.push(`${path}: 应为键值对`); return; }
+      for (const field of ['name', 'type']) if (typeof entry[field] !== 'string' || !entry[field].trim()) errors.push(`${path}.${field}: 应为非空字符串`);
+      if (key === 'proxies' && entry.server !== undefined && typeof entry.server !== 'string') errors.push(`${path}.server: 应为字符串`);
+      for (const field of ['proxies', 'use']) if (entry[field] !== undefined) stringList(entry[field], `${path}.${field}`);
+    });
   }
-
-  // 丢弃明显不是节点的条目，避免卡片渲染时再次抛错
-  const validProxies = proxies.filter((p) => {
-    if (p && typeof p === 'object' && !Array.isArray(p)) return true;
-    warnings.push('已忽略 1 条格式不正确的节点（不是键值对）');
-    return false;
-  });
-
-  const validGroups = proxyGroups.filter((g) => {
-    if (g && typeof g === 'object' && !Array.isArray(g)) return true;
-    warnings.push('已忽略 1 个格式不正确的策略组（不是键值对）');
-    return false;
-  });
-
-  const normalized = {
-    ...DEFAULT_EMPTY_CONFIG,
-    ...parsed,
-    proxies: validProxies,
-    'proxy-groups': validGroups,
-    'rule-providers': ruleProviders,
-    rules,
-  };
-
-  if (filters !== undefined && filters !== null && (typeof filters !== 'object' || Array.isArray(filters))) {
-    delete normalized.filters;
+  if (parsed.rules !== undefined) stringList(parsed.rules, 'rules');
+  if (isMap(parsed['sub-rules'])) for (const [name, rules] of Object.entries(parsed['sub-rules'])) stringList(rules, `sub-rules.${name}`);
+  for (const key of ['rule-providers', 'proxy-providers']) {
+    if (!isMap(parsed[key])) continue;
+    for (const [name, provider] of Object.entries(parsed[key])) {
+      if (!isMap(provider)) { errors.push(`${key}.${name}: 应为键值对`); continue; }
+      for (const field of ['type', 'url', 'path', 'format', 'behavior']) if (provider[field] !== undefined && typeof provider[field] !== 'string') errors.push(`${key}.${name}.${field}: 应为字符串`);
+      if (provider.payload !== undefined && !Array.isArray(provider.payload)) errors.push(`${key}.${name}.payload: 应为列表`);
+      if (provider['health-check'] !== undefined && !isMap(provider['health-check'])) errors.push(`${key}.${name}.health-check: 应为键值对`);
+    }
   }
-
-  return { ok: true, config: normalized, warnings };
-};
-
-/** 判断一个对象能否安全地作为配置传入各标签页（用于恢复本地草稿时兜底） */
-export const isUsableConfig = (value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const arrayKeys = ['proxies', 'proxy-groups', 'rules'];
-  if (!arrayKeys.every((k) => Array.isArray(value[k]))) return false;
-  const providers = value['rule-providers'];
-  return providers === undefined || providers === null || (typeof providers === 'object' && !Array.isArray(providers));
-};
+  if (isMap(parsed.dns)) {
+    for (const key of ['nameserver', 'fallback', 'default-nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter']) if (parsed.dns[key] !== undefined) stringList(parsed.dns[key], `dns.${key}`);
+    for (const key of ['nameserver-policy', 'proxy-server-nameserver-policy']) if (parsed.dns[key] !== undefined && !isMap(parsed.dns[key])) errors.push(`dns.${key}: 应为键值对`);
+  }
+  if (isMap(parsed.tun)) for (const key of ['route-address-set', 'route-exclude-address-set', 'dns-hijack', 'route-exclude-address']) if (parsed.tun[key] !== undefined) stringList(parsed.tun[key], `tun.${key}`);
+  if (errors.length) return { ok: false, error: errors.slice(0, 30).join('\n'), errors };
+  return { ok: true, config: { proxies: [], 'proxy-groups': [], 'rule-providers': {}, rules: [], ...parsed }, warnings: [] };
+}
+export const isUsableConfig = value => normalizeConfig(value).ok;

@@ -1,21 +1,33 @@
 import React, { useState } from 'react';
 import { ArrowDown, ArrowUp, Save } from 'lucide-react';
-import Modal from './Modal';
-import InputRow from './InputRow';
+import Modal from '../common/Modal';
+import InputRow from '../common/InputRow';
+import { parseRuleString } from '../../utils/rules';
 
-function RuleEditorModal({ ruleData, isNew, allTargetNames, allProviderNames, onClose, onSave, showAlert }) {
+function RuleEditorModal({ ruleData, isNew, allTargetNames, allProviderNames, allSubRuleNames = [], onClose, onSave, showAlert }) {
   const [type, setType] = useState(ruleData.type);
   const [payload, setPayload] = useState(ruleData.payload);
   const [target, setTarget] = useState(ruleData.target || 'DIRECT');
   const [extra, setExtra] = useState(ruleData.extra || '');
 
+  const [rawMode, setRawMode] = useState(!!ruleData.error);
+  const [raw, setRaw] = useState(ruleData.raw || '');
   const isRuleSet = type === 'RULE-SET', isMatch = type === 'MATCH';
+  const toggleRaw = enabled => {
+    if (enabled) setRaw((isMatch ? `MATCH,${target}` : `${type},${payload},${target}`) + (extra.trim() ? `,${extra}` : ''));
+    else { const p = parseRuleString(raw); if (p.error) return showAlert(p.error); setType(p.type); setPayload(p.payload); setTarget(p.target); setExtra(p.extra); }
+    setRawMode(enabled);
+  };
 
   const handleSave = (actionType) => {
+    if (rawMode) { const p = parseRuleString(raw); if (p.error) return showAlert(p.error); onSave(raw, actionType); return; }
     if (!isMatch && !payload.trim()) return showAlert("保存失败：匹配内容不能为空");
     if (!target.trim()) return showAlert("保存失败：策略组/节点目标不能为空");
+    if (type === 'RULE-SET' && !allProviderNames.includes(payload.trim())) return showAlert('引用的规则集不存在');
+    if (type === 'SUB-RULE' ? !allSubRuleNames.includes(target) : !allTargetNames.includes(target)) return showAlert('目标不存在');
     let finalString = isMatch ? `MATCH,${target}` : `${type},${payload},${target}`;
     if (extra.trim()) finalString += `,${extra}`;
+    const parsed = parseRuleString(finalString); if (parsed.error) return showAlert(parsed.error);
     onSave(finalString, actionType);
   };
 
@@ -35,10 +47,11 @@ function RuleEditorModal({ ruleData, isNew, allTargetNames, allProviderNames, on
 
   return (
     <Modal title={isNew ? "添加路由规则" : "编辑路由规则"} onClose={onClose} customFooter={customFooter} widthClass="max-w-xl">
-      <div className="space-y-6">
+      <div className="space-y-6"><label className="text-sm"><input type="checkbox" checked={rawMode} onChange={e => toggleRaw(e.target.checked)} /> 编辑完整规则原文（支持复杂或未列出的类型）</label>{rawMode && <textarea aria-label="完整规则原文" value={raw} onChange={e => setRaw(e.target.value)} className="w-full h-32 p-3 border rounded bg-transparent font-mono text-sm" />}<div className={rawMode ? 'hidden' : 'space-y-6'}>
         <div className="flex flex-col gap-2">
           <label className="font-medium text-sm text-slate-700 dark:text-slate-300">规则类型 (Type)</label>
           <select value={type} onChange={e => { setType(e.target.value); if (e.target.value === 'MATCH') setPayload(''); }} className="p-3 border rounded-xl bg-white dark:bg-slate-900 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm">
+<option value={type}>{type}（当前类型）</option><option value="AND">AND</option><option value="OR">OR</option><option value="NOT">NOT</option><option value="SUB-RULE">SUB-RULE</option><option value="GEOSITE">GEOSITE</option><option value="IP-CIDR6">IP-CIDR6</option>
             <option value="RULE-SET">RULE-SET (引用规则集)</option><option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</option><option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</option><option value="DOMAIN">DOMAIN (完整域名)</option><option value="IP-CIDR">IP-CIDR (IP段)</option><option value="GEOIP">GEOIP (国家/地区IP)</option><option value="DST-PORT">DST-PORT (目标端口)</option><option value="PROCESS-NAME">PROCESS-NAME (进程名)</option><option value="MATCH">MATCH (全匹配/兜底)</option>
           </select>
         </div>
@@ -59,11 +72,11 @@ function RuleEditorModal({ ruleData, isNew, allTargetNames, allProviderNames, on
         <div className="flex flex-col gap-2">
           <label className="font-medium text-sm text-slate-700 dark:text-slate-300">目标策略组/节点 (Target)</label>
           <select value={target} onChange={e => setTarget(e.target.value)} className="p-3 border rounded-xl bg-white dark:bg-slate-900 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm">
-            {allTargetNames.map(name => <option key={name} value={name}>{String(name)}</option>)}
+            {(type === 'SUB-RULE' ? allSubRuleNames : allTargetNames).map(name => <option key={name} value={name}>{String(name)}</option>)}
           </select>
         </div>
         <InputRow label="附加参数 (可选, 如 no-resolve)" value={extra} onChange={setExtra} placeholder="留空即可" />
-      </div>
+      </div></div>
     </Modal>
   );
 }

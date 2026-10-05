@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
 import { Link as LinkIcon, X, Plus, Trash2 } from 'lucide-react';
-import Modal from './Modal';
-import InputRow from './InputRow';
-import { PROTOCOL_SCHEMAS } from '../constants/templates';
+import Modal from '../common/Modal';
+import InputRow from '../common/InputRow';
+import { omitFields } from '../../utils/editing';
+import { PROTOCOL_SCHEMAS } from '../../constants/templates';
 
 function ProxyEditorModal({ proxy, onClose, onSave, showAlert, parseProxyLink }) {
   const [basicInfo, setBasicInfo] = useState({
-    name: proxy.name || '', type: proxy.type || 'ss', server: proxy.server || '', port: proxy.port || 443
+    name: proxy.name || '', type: proxy.type || 'ss', server: proxy.server || '', port: proxy.port ?? ''
   });
+  const [showSecrets, setShowSecrets] = useState(false);
   const [quickLink, setQuickLink] = useState('');
   const [extraFields, setExtraFields] = useState(() => {
-    const { name, type, server, port, ...rest } = proxy;
+    const rest = omitFields(proxy, ['name', 'type', 'server', 'port']);
     return Object.keys(rest).map(k => {
       let val = rest[k], t = 'string';
       if (typeof val === 'number') t = 'number';
@@ -26,7 +28,7 @@ function ProxyEditorModal({ proxy, onClose, onSave, showAlert, parseProxyLink })
       const proxyData = parseProxyLink(quickLink.trim());
       Object.keys(proxyData).forEach(key => proxyData[key] === undefined && delete proxyData[key]);
       setBasicInfo({ name: proxyData.name || basicInfo.name, type: proxyData.type || basicInfo.type, server: proxyData.server || basicInfo.server, port: proxyData.port || basicInfo.port });
-      const { name, type, server, port, ...rest } = proxyData;
+      const rest = omitFields(proxyData, ['name', 'type', 'server', 'port']);
       const newExtraFields = Object.keys(rest).map(k => {
         let val = rest[k], t = 'string';
         if (typeof val === 'number') t = 'number';
@@ -48,19 +50,21 @@ function ProxyEditorModal({ proxy, onClose, onSave, showAlert, parseProxyLink })
 
   const handleSave = () => {
     if (!basicInfo.name.trim()) return showAlert('保存失败：节点名称不能为空');
-    if (!basicInfo.server.trim()) return showAlert('保存失败：服务器地址不能为空');
-    let result = { name: basicInfo.name.trim(), type: basicInfo.type.trim(), server: basicInfo.server.trim(), port: Number(basicInfo.port) };
-    extraFields.forEach(f => {
-      if (f.key.trim() === '') return;
-      if (f.value === '' && PROTOCOL_SCHEMAS[basicInfo.type]?.some(s => s.key === f.key)) return;
-      let val = f.value;
-      try {
-        if (f.type === 'number') val = Number(val);
-        if (f.type === 'boolean') val = val === 'true' || val === true;
-        if (f.type === 'json') val = JSON.parse(val);
-      } catch (e) { console.warn(`[${f.key}] 转换 JSON 失败`); }
-      result[f.key.trim()] = val;
-    });
+    const result = { name: basicInfo.name.trim(), type: basicInfo.type.trim() };
+    if (basicInfo.server !== '') result.server = basicInfo.server.trim();
+    if (basicInfo.port !== '') result.port = Number(basicInfo.port);
+    if (result.port !== undefined && (!Number.isInteger(result.port) || result.port < 1 || result.port > 65535)) return showAlert('端口必须为 1–65535 的整数');
+    const seen = new Set(['name', 'type', 'server', 'port']);
+    try {
+      for (const f of extraFields) {
+        const key = f.key.trim(); if (!key) continue;
+        if (seen.has(key)) throw new Error(`重复字段：${key}`); seen.add(key);
+        const val = f.type === 'number' ? Number(f.value) : f.type === 'boolean' ? f.value === 'true' || f.value === true : f.type === 'json' ? JSON.parse(f.value) : f.value;
+        if (f.type === 'number' && !Number.isFinite(val)) throw new Error(`${key}: 无效数字`);
+        Object.defineProperty(result, key, { value: val, enumerable: true, writable: true, configurable: true });
+      }
+    } catch (e) { return showAlert(`参数未保存：${e.message}`); }
+
     onSave(result);
   };
 
@@ -71,7 +75,7 @@ function ProxyEditorModal({ proxy, onClose, onSave, showAlert, parseProxyLink })
 
   return (
     <Modal title="编辑节点信息" onClose={onClose} onSave={handleSave}>
-      <div className="space-y-6">
+      <div className="space-y-6"><label className="text-sm"><input type="checkbox" checked={showSecrets} onChange={e => setShowSecrets(e.target.checked)} /> 显示密码和私钥</label>
         <div className="bg-blue-50/50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-900/30 flex gap-2 items-center shadow-sm">
           <LinkIcon className="w-5 h-5 text-blue-500 shrink-0" />
           <div className="relative flex-1">
@@ -113,7 +117,7 @@ function ProxyEditorModal({ proxy, onClose, onSave, showAlert, parseProxyLink })
                         <option value="">未设置 (留空)</option><option value="true">true</option><option value="false">false</option>
                       </select>
                     ) : (
-                      <input type={type === 'number' ? 'number' : 'text'} value={val} onChange={(e) => onChange(e.target.value)} placeholder={type === 'json' ? 'JSON / 未设置' : '未设置'} className="p-3 border rounded-xl bg-white dark:bg-slate-900 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm placeholder-slate-400/60" />
+                      <input type={type === 'number' ? 'number' : !showSecrets && /password|private-key/.test(item.schemaDef.key) ? 'password' : 'text'} value={val} onChange={(e) => onChange(e.target.value)} placeholder={type === 'json' ? 'JSON / 未设置' : '未设置'} className="p-3 border rounded-xl bg-white dark:bg-slate-900 dark:border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm placeholder-slate-400/60" />
                     )}
                   </div>
                 );

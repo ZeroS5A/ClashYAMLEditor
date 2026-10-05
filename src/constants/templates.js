@@ -1,8 +1,8 @@
 export const DEFAULT_EMPTY_CONFIG = {
   port: 7890,
   'socks-port': 7891,
-  'allow-lan': true,
-  mode: 'Rule',
+  'allow-lan': false,
+  mode: 'rule',
   'log-level': 'info',
   proxies: [],
   'proxy-groups': [],
